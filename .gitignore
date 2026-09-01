@@ -1,0 +1,26 @@
+# Arquivos de editores e IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependências e builds (arquivos gerados sozinhos)
+node_modules/
+dist/
+build/
+.gradle/
+*.class
+*.apk
+*.aab
+
+# Banco de dados local e logs temporários
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Arquivos de ambiente e senhas
+.env
+.env.local
+*.key
+*.pem
