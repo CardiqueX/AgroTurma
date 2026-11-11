@@ -1,0 +1,6 @@
+{
+  "name": "AgroTurma",
+  "description": "Controle de Mão de Obra Rural: gestão de trabalhadores, lançamentos de produção, diárias, faltas, pagamentos e relatórios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
