@@ -131,9 +131,9 @@ export const MobileAppContainer: React.FC = () => {
         )}
 
         {/* Modals & Drawers */}
-        <QuickLaunchModal />
-        <NotificationDrawer />
-        <SideMenuDrawer />
+        <QuickLaunchModal contained />
+        <NotificationDrawer contained />
+        <SideMenuDrawer contained />
 
         {/* Toast Notification */}
         {toastMessage && (

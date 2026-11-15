@@ -2,7 +2,11 @@ import React from 'react';
 import { Package, CalendarCheck, AlertTriangle, UserPlus, X } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
-export const QuickLaunchModal: React.FC = () => {
+interface QuickLaunchModalProps {
+  contained?: boolean;
+}
+
+export const QuickLaunchModal: React.FC<QuickLaunchModalProps> = ({ contained = false }) => {
   const { isQuickLaunchOpen, setIsQuickLaunchOpen, navigateTo } = useApp();
 
   if (!isQuickLaunchOpen) return null;
@@ -26,9 +30,16 @@ export const QuickLaunchModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+    <div
+      onClick={() => setIsQuickLaunchOpen(false)}
+      className={`${
+        contained ? 'absolute items-end' : 'fixed items-end sm:items-center'
+      } inset-0 z-50 flex justify-center bg-black/50 backdrop-blur-xs animate-in fade-in duration-200`}
+    >
       <div
-        className="w-full max-w-sm bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 border border-stone-200"
+        className={`w-full max-w-sm bg-white ${
+          contained ? 'rounded-t-2xl' : 'rounded-t-2xl sm:rounded-2xl'
+        } shadow-2xl p-5 border border-stone-200`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between pb-3 border-b border-stone-100">

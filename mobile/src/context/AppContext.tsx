@@ -68,10 +68,8 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('dashboard');
   const [screenHistory, setScreenHistory] = useState<ScreenType[]>(['dashboard']);
-
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>('w1');
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>('p1');
-
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [periodString, setPeriodString] = useState<string>('01/06/2025 a 15/06/2025');
   const [isOnline, setIsOnline] = useState<boolean>(true);
@@ -127,6 +125,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('agroturma_closure', JSON.stringify(weekClosure));
   }, [weekClosure]);
 
+  // Carrega os trabalhadores reais do MariaDB ao iniciar
+  useEffect(() => {
+    fetch('/api/workers')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setWorkers(data);
+          setSelectedWorkerId(data[0].id);
+        }
+      })
+      .catch((err) => console.error('Erro ao buscar trabalhadores da API:', err));
+  }, []);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -152,49 +163,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addWorker = (workerData: Omit<Worker, 'id' | 'createdAt' | 'avatarInitials'>) => {
-    const initials = workerData.name
-      .split(' ')
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((n) => n[0].toUpperCase())
-      .join('');
+  const addWorker = async (workerData: Omit<Worker, 'id' | 'createdAt' | 'avatarInitials'>) => {
+    try {
+      const res = await fetch('/api/workers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(workerData),
+      });
+      if (!res.ok) throw new Error('Falha ao gravar no banco');
+      const newWorker: Worker = await res.json();
 
-    const newWorker: Worker = {
-      ...workerData,
-      id: 'w_' + Date.now(),
-      avatarInitials: initials || 'TR',
-      avatarColor: 'bg-emerald-800',
-      createdAt: new Date().toISOString().split('T')[0],
-    };
+      setWorkers((prev) => [newWorker, ...prev]);
 
-    setWorkers((prev) => [newWorker, ...prev]);
-
-    // Also create initial payment record
-    const newPayment: PaymentRecord = {
-      id: 'p_' + Date.now(),
-      workerId: newWorker.id,
-      workerName: newWorker.name,
-      period: periodString,
-      totalDiarias: 0,
-      totalProducao: 0,
-      boxesCount: 0,
-      grossTotal: 0,
-      discounts: 0,
-      netTotal: 0,
-      status: 'a_pagar',
-    };
-    setPayments((prev) => [newPayment, ...prev]);
-
-    showToast(`Trabalhador ${newWorker.name} cadastrado com sucesso!`);
-    navigateTo('workers');
+      const newPayment: PaymentRecord = {
+        id: 'p_' + Date.now(),
+        workerId: newWorker.id,
+        workerName: newWorker.name,
+        period: periodString,
+        totalDiarias: 0,
+        totalProducao: 0,
+        boxesCount: 0,
+        grossTotal: 0,
+        discounts: 0,
+        netTotal: 0,
+        status: 'a_pagar',
+      };
+      setPayments((prev) => [newPayment, ...prev]);
+      showToast(`Trabalhador ${newWorker.name} cadastrado no banco!`);
+      navigateTo('workers');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao cadastrar trabalhador no banco.');
+    }
   };
 
-  const updateWorkerStatus = (id: string, status: 'ativo' | 'inativo') => {
-    setWorkers((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, status } : w))
-    );
-    showToast('Status do trabalhador atualizado!');
+  const updateWorkerStatus = async (id: string, status: 'ativo' | 'inativo') => {
+    try {
+      await fetch(`/api/workers/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      setWorkers((prev) =>
+        prev.map((w) => (w.id === id ? { ...w, status } : w))
+      );
+      showToast('Status do trabalhador atualizado no banco!');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao atualizar status.');
+    }
   };
 
   const addLaunch = (launchData: Omit<Launch, 'id' | 'createdAt'>) => {
@@ -203,10 +220,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'l_' + Date.now(),
       createdAt: new Date().toISOString(),
     };
-
     setLaunches((prev) => [newLaunch, ...prev]);
 
-    // Update payment record for that worker
     setPayments((prev) =>
       prev.map((p) => {
         if (p.workerId === launchData.workerId) {
@@ -228,7 +243,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Register audit log
     const now = new Date();
     const timeStr = `${launchData.date} às ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     const log: AuditLog = {
@@ -239,7 +253,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       workerName: launchData.workerName,
       changeTitle:
         launchData.type === 'producao'
-          ? `Produção · ${launchData.quantity} caixas`
+          ? `Produção ${launchData.quantity} caixas`
           : launchData.type === 'diaria'
           ? `Diária - R$ ${launchData.totalValue.toFixed(2)}`
           : 'Falta',

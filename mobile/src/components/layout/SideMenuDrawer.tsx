@@ -18,7 +18,11 @@ import {
 import { useApp } from '../../context/AppContext';
 import { ScreenType } from '../../types';
 
-export const SideMenuDrawer: React.FC = () => {
+interface SideMenuDrawerProps {
+  contained?: boolean;
+}
+
+export const SideMenuDrawer: React.FC<SideMenuDrawerProps> = ({ contained = false }) => {
   const { isMenuDrawerOpen, setIsMenuDrawerOpen, navigateTo, logout, currentScreen } = useApp();
 
   if (!isMenuDrawerOpen) return null;
@@ -42,14 +46,22 @@ export const SideMenuDrawer: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div
+      className={`${
+        contained ? 'absolute' : 'fixed'
+      } inset-0 z-50 flex bg-black/60 backdrop-blur-xs animate-in fade-in duration-200`}
+    >
       <div
         className="w-4/5 max-w-xs bg-white h-full flex flex-col shadow-2xl justify-between animate-in slide-in-from-left duration-250"
         onClick={(e) => e.stopPropagation()}
       >
         <div>
           {/* Header */}
-          <div className="bg-[#14532d] text-white p-5 flex items-center justify-between">
+          <div
+            className={`bg-[#14532d] text-white px-5 pb-4 ${
+              contained ? 'pt-7' : 'pt-5'
+            } flex items-center justify-between`}
+          >
             <div className="flex items-center space-x-2.5">
               <div className="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-300">
                 <Sprout className="w-5 h-5" />
@@ -68,7 +80,7 @@ export const SideMenuDrawer: React.FC = () => {
           </div>
 
           {/* User info */}
-          <div className="px-5 py-3.5 bg-stone-50 border-b border-stone-200 flex items-center justify-between text-xs">
+          <div className="px-5 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between text-xs">
             <div className="flex items-center space-x-2">
               <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
               <span className="font-semibold text-stone-700">Maria Apontadora</span>
@@ -79,7 +91,7 @@ export const SideMenuDrawer: React.FC = () => {
           </div>
 
           {/* Nav items */}
-          <div className="py-2 overflow-y-auto max-h-[62vh]">
+          <div className="py-1.5 overflow-y-auto max-h-[58vh]">
             {navItems.map((item) => {
               const active = currentScreen === item.screen;
               return (
@@ -122,6 +134,7 @@ export const SideMenuDrawer: React.FC = () => {
           </button>
         </div>
       </div>
+
       <div className="flex-1" onClick={() => setIsMenuDrawerOpen(false)} />
     </div>
   );

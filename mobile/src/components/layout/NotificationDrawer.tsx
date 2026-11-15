@@ -2,7 +2,11 @@ import React from 'react';
 import { X, Bell, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
-export const NotificationDrawer: React.FC = () => {
+interface NotificationDrawerProps {
+  contained?: boolean;
+}
+
+export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ contained = false }) => {
   const { isNotificationOpen, setIsNotificationOpen, navigateTo } = useApp();
 
   if (!isNotificationOpen) return null;
@@ -11,7 +15,7 @@ export const NotificationDrawer: React.FC = () => {
     {
       id: 1,
       title: 'Fechamento da Semana Pendente',
-      desc: 'A semana 09/06 a 15/06 ainda não foi fechada. 42 trabalhadores aguardando.',
+      desc: 'A semana atual ainda não foi fechada.',
       time: 'Há 25 minutos',
       type: 'warning',
       action: () => {
@@ -21,7 +25,7 @@ export const NotificationDrawer: React.FC = () => {
     },
     {
       id: 2,
-      title: '8 Faltas Registradas no Período',
+      title: 'Faltas Registradas no Período',
       desc: 'Revise os motivos das faltas para fechar a folha sem divergências.',
       time: 'Hoje às 12:40',
       type: 'info',
@@ -33,7 +37,7 @@ export const NotificationDrawer: React.FC = () => {
     {
       id: 3,
       title: 'Sincronização Offline Concluída',
-      desc: '12 lançamentos foram sincronizados com sucesso na nuvem.',
+      desc: 'Lançamentos sincronizados com sucesso com o banco de dados.',
       time: 'Hoje às 08:15',
       type: 'success',
       action: null,
@@ -41,13 +45,22 @@ export const NotificationDrawer: React.FC = () => {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+    <div
+      onClick={() => setIsNotificationOpen(false)}
+      className={`${
+        contained ? 'absolute' : 'fixed'
+      } inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs animate-in fade-in duration-200`}
+    >
       <div
-        className="w-full max-w-xs bg-white h-full shadow-2xl flex flex-col justify-between animate-in slide-in-from-right duration-250"
+        className="w-4/5 max-w-xs bg-white h-full shadow-2xl flex flex-col justify-between animate-in slide-in-from-right duration-250"
         onClick={(e) => e.stopPropagation()}
       >
         <div>
-          <div className="bg-[#14532d] text-white p-4 flex items-center justify-between">
+          <div
+            className={`bg-[#14532d] text-white px-4 pb-3.5 ${
+              contained ? 'pt-7' : 'pt-4'
+            } flex items-center justify-between`}
+          >
             <div className="flex items-center space-x-2">
               <Bell className="w-5 h-5 text-amber-300" />
               <h3 className="text-base font-bold">Notificações</h3>
@@ -60,7 +73,7 @@ export const NotificationDrawer: React.FC = () => {
             </button>
           </div>
 
-          <div className="p-3 space-y-2.5 overflow-y-auto max-h-[80vh]">
+          <div className="p-3 space-y-2.5 overflow-y-auto max-h-[75vh]">
             {notifications.map((n) => (
               <div
                 key={n.id}
