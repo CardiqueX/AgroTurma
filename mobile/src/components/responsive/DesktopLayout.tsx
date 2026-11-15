@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sprout,
   Home,
@@ -73,7 +73,6 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
   const activePayment =
     payments.find((p) => p.id === selectedPaymentId) || payments[0];
 
-  const activeWorkersCount = workers.filter((w) => w.status === 'ativo').length;
   const filteredWorkers = workers.filter((w) => {
     const match =
       w.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -81,15 +80,28 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
     return workerTab === 'todos' ? match : match && w.status === workerTab;
   });
 
-  const chartData = [
-    { date: '09/06', day: 'Seg', boxes: 240 },
-    { date: '10/06', day: 'Ter', boxes: 380 },
-    { date: '11/06', day: 'Qua', boxes: 420 },
-    { date: '12/06', day: 'Qui', boxes: 310 },
-    { date: '13/06', day: 'Sex', boxes: 390 },
-    { date: '14/06', day: 'Sáb', boxes: 490 },
-    { date: '15/06', day: 'Dom', boxes: 580 },
-  ];
+  const [activeWorkersCount, setActiveWorkersCount] = useState<number>(0);
+  const [totalBoxes, setTotalBoxes] = useState<number>(0);
+  const [absencesCount, setAbsencesCount] = useState<number>(0);
+  const [totalPayable, setTotalPayable] = useState<number>(0);
+  const [chartData, setChartData] = useState<{ date: string; day: string; boxes: number }[]>([]);
+
+  useEffect(() => {
+    if (currentScreen === 'dashboard') {
+      fetch('/api/dashboard')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && !data.error) {
+            setActiveWorkersCount(data.activeWorkersCount ?? 0);
+            setTotalBoxes(data.totalBoxes ?? 0);
+            setAbsencesCount(data.absencesCount ?? 0);
+            setTotalPayable(data.totalPayable ?? 0);
+            setChartData(data.chartData ?? []);
+          }
+        })
+        .catch((err) => console.error('Erro ao buscar dashboard:', err));
+    }
+  }, [currentScreen]);
 
   const navigationItems = [
     { label: 'Dashboard', screen: 'dashboard' as ScreenType, icon: <Home className="w-4 h-4" /> },
@@ -279,7 +291,7 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
                 >
                   <span className="text-xs font-semibold text-stone-500">Produção total</span>
                   <div className="text-3xl font-black text-blue-700 mt-1 flex items-baseline space-x-1.5">
-                    <span>4350</span>
+                    <span>{totalBoxes}</span>
                     <span className="text-sm font-semibold text-blue-500">caixas</span>
                   </div>
                   <div className="text-xs text-stone-400 mt-2 pt-2 border-t border-stone-100 flex items-center justify-between">
@@ -293,7 +305,7 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
                   className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs hover:border-red-500 hover:shadow-xs transition-all cursor-pointer"
                 >
                   <span className="text-xs font-semibold text-stone-500">Faltas no período</span>
-                  <div className="text-3xl font-black text-red-600 mt-1">8</div>
+                  <div className="text-3xl font-black text-red-600 mt-1">{absencesCount}</div>
                   <div className="text-xs text-stone-400 mt-2 pt-2 border-t border-stone-100 flex items-center justify-between">
                     <span>Ausências registradas</span>
                     <span className="text-red-600 font-bold">Detalhar</span>
@@ -305,7 +317,7 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
                   className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs hover:border-amber-500 hover:shadow-xs transition-all cursor-pointer"
                 >
                   <span className="text-xs font-semibold text-stone-500">A pagar</span>
-                  <div className="text-2xl font-black text-amber-600 mt-1">R$ 28.450,00</div>
+                  <div className="text-2xl font-black text-amber-600 mt-1">R$ {totalPayable.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   <div className="text-xs text-stone-400 mt-2 pt-2 border-t border-stone-100 flex items-center justify-between">
                     <span>Folha consolidada</span>
                     <span className="text-amber-700 font-bold">Conferir</span>

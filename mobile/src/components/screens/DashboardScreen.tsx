@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Calendar,
   Users,
@@ -11,39 +11,53 @@ import {
 import { MobileHeader } from '../layout/MobileHeader';
 import { useApp } from '../../context/AppContext';
 
+interface ChartItem {
+  date: string;
+  day: string;
+  boxes: number;
+}
+
 export const DashboardScreen: React.FC = () => {
   const {
-    workers,
     periodString,
     setPeriodString,
     navigateTo,
-    setIsQuickLaunchOpen,
   } = useApp();
 
-  const [activeBar, setActiveBar] = useState<number | null>(6);
+  const [activeBar, setActiveBar] = useState<number | null>(0);
   const [isEditingPeriod, setIsEditingPeriod] = useState(false);
 
-  // Daily production data matching the screenshot chart (09/06 to 15/06, scale 0 to 600)
-  const chartData = [
-    { date: '09/06', day: 'Seg', boxes: 240 },
-    { date: '10/06', day: 'Ter', boxes: 380 },
-    { date: '11/06', day: 'Qua', boxes: 420 },
-    { date: '12/06', day: 'Qui', boxes: 310 },
-    { date: '13/06', day: 'Sex', boxes: 390 },
-    { date: '14/06', day: 'Sáb', boxes: 490 },
-    { date: '15/06', day: 'Dom', boxes: 580 },
-  ];
+  const [activeWorkersCount, setActiveWorkersCount] = useState<number>(0);
+  const [totalBoxes, setTotalBoxes] = useState<number>(0);
+  const [absencesCount, setAbsencesCount] = useState<number>(0);
+  const [totalPayable, setTotalPayable] = useState<number>(0);
+  const [chartData, setChartData] = useState<ChartItem[]>([]);
 
-  const maxVal = 600;
+  useEffect(() => {
+    fetch('/api/dashboard')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && !data.error) {
+          setActiveWorkersCount(data.activeWorkersCount ?? 0);
+          setTotalBoxes(data.totalBoxes ?? 0);
+          setAbsencesCount(data.absencesCount ?? 0);
+          setTotalPayable(data.totalPayable ?? 0);
+          if (Array.isArray(data.chartData) && data.chartData.length > 0) {
+            setChartData(data.chartData);
+            setActiveBar(data.chartData.length - 1);
+          }
+        }
+      })
+      .catch((err) => console.error('Erro ao carregar dashboard:', err));
+  }, []);
 
-  const activeWorkersCount = workers.filter((w) => w.status === 'ativo').length;
+  const maxVal = Math.max(...chartData.map((d) => d.boxes), 100);
 
   return (
     <div className="flex flex-col min-h-full bg-stone-100 text-stone-900 pb-4">
       <MobileHeader title="Dashboard" showMenu showBell />
 
       <div className="p-4 space-y-4">
-        {/* Resumo da turma & Período */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-stone-800 tracking-tight">
@@ -52,7 +66,6 @@ export const DashboardScreen: React.FC = () => {
             <span className="text-[11px] text-stone-500 font-medium">Fazenda Bela Aliança</span>
           </div>
 
-          {/* Date range picker selector */}
           <div className="bg-white border border-stone-200/90 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-2xs">
             {isEditingPeriod ? (
               <input
@@ -67,7 +80,6 @@ export const DashboardScreen: React.FC = () => {
               <span
                 onClick={() => setIsEditingPeriod(true)}
                 className="text-xs font-semibold text-stone-700 cursor-pointer hover:text-emerald-700"
-                title="Clique para editar o período"
               >
                 {periodString}
               </span>
@@ -81,9 +93,7 @@ export const DashboardScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* 4 KPI Cards Grid */}
         <div className="grid grid-cols-2 gap-3">
-          {/* 1. Trabalhadores Ativos */}
           <div
             onClick={() => navigateTo('workers')}
             className="bg-white p-3.5 rounded-xl border border-stone-200/90 shadow-2xs hover:border-emerald-400 transition-all cursor-pointer group"
@@ -92,7 +102,7 @@ export const DashboardScreen: React.FC = () => {
               Trabalhadores ativos
             </div>
             <div className="text-2xl font-extrabold text-emerald-600 mt-1">
-              {activeWorkersCount > 0 ? activeWorkersCount : 42}
+              {activeWorkersCount}
             </div>
             <div className="flex items-center justify-between mt-2 pt-1 border-t border-stone-100 text-[10px] text-stone-400 group-hover:text-emerald-700">
               <div className="w-6 h-6 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center">
@@ -104,7 +114,6 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* 2. Produção Total */}
           <div
             onClick={() => navigateTo('launch_production')}
             className="bg-white p-3.5 rounded-xl border border-stone-200/90 shadow-2xs hover:border-blue-400 transition-all cursor-pointer group"
@@ -113,7 +122,7 @@ export const DashboardScreen: React.FC = () => {
               Produção total
             </div>
             <div className="text-2xl font-extrabold text-blue-600 mt-1 flex items-baseline space-x-1">
-              <span>4350</span>
+              <span>{totalBoxes}</span>
               <span className="text-xs font-semibold text-blue-400">caixas</span>
             </div>
             <div className="flex items-center justify-between mt-2 pt-1 border-t border-stone-100 text-[10px] text-stone-400 group-hover:text-blue-700">
@@ -126,7 +135,6 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* 3. Faltas no Período */}
           <div
             onClick={() => navigateTo('launch_absence')}
             className="bg-white p-3.5 rounded-xl border border-stone-200/90 shadow-2xs hover:border-red-400 transition-all cursor-pointer group"
@@ -135,7 +143,7 @@ export const DashboardScreen: React.FC = () => {
               Faltas no período
             </div>
             <div className="text-2xl font-extrabold text-red-500 mt-1">
-              8
+              {absencesCount}
             </div>
             <div className="flex items-center justify-between mt-2 pt-1 border-t border-stone-100 text-[10px] text-stone-400 group-hover:text-red-700">
               <div className="w-6 h-6 rounded-md bg-red-50 text-red-600 flex items-center justify-center">
@@ -147,7 +155,6 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* 4. A Pagar */}
           <div
             onClick={() => navigateTo('payments')}
             className="bg-white p-3.5 rounded-xl border border-stone-200/90 shadow-2xs hover:border-amber-400 transition-all cursor-pointer group"
@@ -156,7 +163,7 @@ export const DashboardScreen: React.FC = () => {
               A pagar
             </div>
             <div className="text-lg font-extrabold text-amber-600 mt-1 leading-tight">
-              R$ 28.450,00
+              R$ {totalPayable.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <div className="flex items-center justify-between mt-2 pt-1 border-t border-stone-100 text-[10px] text-stone-400 group-hover:text-amber-700">
               <div className="w-6 h-6 rounded-md bg-amber-50 text-amber-600 flex items-center justify-center">
@@ -169,7 +176,6 @@ export const DashboardScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* Produção por dia (caixas) - Bar Chart */}
         <div className="bg-white p-4 rounded-xl border border-stone-200/90 shadow-2xs">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xs font-bold text-stone-800">
@@ -177,14 +183,12 @@ export const DashboardScreen: React.FC = () => {
             </h3>
             <div className="flex items-center space-x-1 text-[11px] text-emerald-700 font-semibold">
               <TrendingUp className="w-3.5 h-3.5" />
-              <span>+18% na semana</span>
+              <span>Dados em tempo real</span>
             </div>
           </div>
 
-          {/* Chart area */}
           <div className="h-44 w-full flex flex-col justify-end pt-2">
-            {/* Value tooltip */}
-            {activeBar !== null && (
+            {activeBar !== null && chartData[activeBar] && (
               <div className="text-center text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 py-1 px-2 rounded-lg mb-2 mx-auto w-fit transition-all">
                 {chartData[activeBar].date} ({chartData[activeBar].day}):{' '}
                 <span className="text-emerald-700 font-extrabold">
@@ -194,23 +198,14 @@ export const DashboardScreen: React.FC = () => {
             )}
 
             <div className="relative h-32 flex items-end justify-between px-2 border-b border-stone-200">
-              {/* Reference grid lines */}
-              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-40 text-[9px] text-stone-400">
-                <div className="border-b border-dashed border-stone-200 w-full flex justify-end pr-1">600</div>
-                <div className="border-b border-dashed border-stone-200 w-full flex justify-end pr-1">400</div>
-                <div className="border-b border-dashed border-stone-200 w-full flex justify-end pr-1">200</div>
-                <div className="w-full flex justify-end pr-1">0</div>
-              </div>
-
-              {/* Bars */}
               {chartData.map((item, index) => {
-                const heightPercent = Math.round((item.boxes / maxVal) * 100);
+                const heightPercent = Math.max(Math.round((item.boxes / maxVal) * 100), 8);
                 const isSelected = activeBar === index;
                 return (
                   <div
                     key={item.date}
                     onClick={() => setActiveBar(index)}
-                    className="relative z-10 flex flex-col items-center flex-1 mx-1 cursor-pointer group"
+                    className="relative z-10 flex flex-col items-center flex-1 mx-1 cursor-pointer group h-full justify-end"
                   >
                     <div
                       style={{ height: `${heightPercent}%` }}
@@ -225,7 +220,6 @@ export const DashboardScreen: React.FC = () => {
               })}
             </div>
 
-            {/* X Axis Labels */}
             <div className="flex justify-between px-2 pt-2 text-[10px] text-stone-500 font-medium">
               {chartData.map((item, index) => (
                 <div
@@ -242,7 +236,6 @@ export const DashboardScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick Launch Buttons */}
         <div className="bg-white p-3.5 rounded-xl border border-stone-200/90 shadow-2xs space-y-2">
           <div className="text-xs font-bold text-stone-800">
             Ações Rápidas de Campo
