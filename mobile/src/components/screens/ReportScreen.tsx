@@ -1,218 +1,291 @@
 import React, { useState } from 'react';
-import { Calendar, FileDown, Share2, Check, Filter } from 'lucide-react';
+import {
+  Calendar,
+  Download,
+  Package,
+  AlertTriangle,
+  Wallet,
+  ChevronRight,
+  FileText,
+} from 'lucide-react';
 import { MobileHeader } from '../layout/MobileHeader';
 import { useApp } from '../../context/AppContext';
-import { REPORT_ROWS } from '../../data/initialData';
 
 export const ReportScreen: React.FC = () => {
-  const { periodString, setSelectedWorkerId, navigateTo, showToast } = useApp();
-  const [viewMode, setViewMode] = useState<'resumo' | 'detalhado'>('resumo');
-  const [showFilterModal, setShowFilterModal] = useState(false);
-  const [filterWorker, setFilterWorker] = useState('');
+  const {
+    workers,
+    launches,
+    periodString,
+    setSelectedWorkerId,
+    navigateTo,
+    showToast,
+  } = useApp();
 
-  const rows = REPORT_ROWS.filter((r) =>
-    r.name.toLowerCase().includes(filterWorker.toLowerCase())
-  );
+  const [activeTab, setActiveTab] = useState<'resumo' | 'detalhado'>('resumo');
+  const [typeFilter, setTypeFilter] = useState<'todos' | 'producao' | 'diaria' | 'falta'>('todos');
 
-  const totals = rows.reduce(
-    (acc, r) => ({
-      workedDays: acc.workedDays + r.workedDays,
-      boxes: acc.boxes + r.boxes,
-      diarias: acc.diarias + r.diarias,
-      faltas: acc.faltas + r.faltas,
-      totalProduction: acc.totalProduction + r.totalProduction,
-      totalGeneral: acc.totalGeneral + r.totalGeneral,
-    }),
-    {
-      workedDays: 0,
-      boxes: 0,
-      diarias: 0,
-      faltas: 0,
-      totalProduction: 0,
-      totalGeneral: 0,
-    }
-  );
+  // Totais gerais reais vindos do banco
+  const totalBoxes = launches
+    .filter((l) => l.type === 'producao')
+    .reduce((acc, l) => acc + (l.quantity || 0), 0);
 
-  const handleExportPdf = () => {
-    showToast('Gerando Relatório Geral em PDF para impressão...');
-    window.print();
-  };
+  const totalAbsences = launches.filter((l) => l.type === 'falta').length;
 
-  const handleShare = () => {
-    const text = `*AgroTurma - Relatório Geral (${periodString})*\n` +
-      `Trabalhadores: ${rows.length}\n` +
-      `Total Caixas: ${totals.boxes}\n` +
-      `Diárias: R$ ${totals.diarias.toFixed(2)}\n` +
-      `Produção: R$ ${totals.totalProduction.toFixed(2)}\n` +
-      `*Total Geral:* R$ ${totals.totalGeneral.toFixed(2)}`;
+  const totalProducaoValor = launches
+    .filter((l) => l.type === 'producao')
+    .reduce((acc, l) => acc + l.totalValue, 0);
 
-    if (navigator.share) {
-      navigator.share({ title: 'Relatório AgroTurma', text }).catch(() => {});
-    } else {
-      navigator.clipboard.writeText(text);
-      showToast('Relatório copiado para a área de transferência! Cole no WhatsApp.');
-    }
+  const totalDiariasValor = launches
+    .filter((l) => l.type === 'diaria')
+    .reduce((acc, l) => acc + l.totalValue, 0);
+
+  const totalGeral = totalProducaoValor + totalDiariasValor;
+
+  // Resumo consolidado por trabalhador
+  const workerSummaries = workers.map((w) => {
+    const wLaunches = launches.filter((l) => l.workerId === w.id);
+    const prod = wLaunches.filter((l) => l.type === 'producao');
+    const diar = wLaunches.filter((l) => l.type === 'diaria');
+    const falt = wLaunches.filter((l) => l.type === 'falta');
+
+    const boxes = prod.reduce((acc, l) => acc + (l.quantity || 0), 0);
+    const prodVal = prod.reduce((acc, l) => acc + l.totalValue, 0);
+    const diarVal = diar.reduce((acc, l) => acc + l.totalValue, 0);
+
+    return {
+      worker: w,
+      boxes,
+      absences: falt.length,
+      prodVal,
+      diarVal,
+      total: prodVal + diarVal,
+      count: wLaunches.length,
+    };
+  });
+
+  // Lançamentos filtrados para a aba Detalhado
+  const filteredLaunches =
+    typeFilter === 'todos'
+      ? launches
+      : launches.filter((l) => l.type === typeFilter);
+
+  // Exportação real em CSV (abre direto no Excel)
+  const handleExportCsv = () => {
+    const headers = ['Data', 'Trabalhador', 'Tipo', 'Descricao', 'Quantidade_Caixas', 'Valor_Total'];
+    const rows = launches.map((l) => [
+      l.date,
+      `"${l.workerName}"`,
+      l.type,
+      `"${l.description}"`,
+      l.quantity || 0,
+      l.totalValue.toFixed(2).replace('.', ','),
+    ]);
+
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'relatorio_agroturma.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast('Relatório CSV exportado com sucesso!');
   };
 
   return (
-    <div className="flex flex-col min-h-full bg-stone-100 text-stone-900 pb-4">
-      <MobileHeader
-        title="Relatório Geral"
-        showFilter
-        onFilterClick={() => setShowFilterModal(!showFilterModal)}
-      />
+    <div className="flex flex-col min-h-full bg-stone-100 text-stone-900 pb-6">
+      <MobileHeader title="Relatório Geral" showMenu showBell />
 
-      <div className="p-3 space-y-3 flex-1 flex flex-col justify-between">
-        <div className="space-y-3">
-          {/* Period selector */}
-          <div className="bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-2xs">
-            <span className="text-xs font-semibold text-stone-700">
-              {periodString}
-            </span>
-            <Calendar className="w-4 h-4 text-stone-400" />
+      <div className="p-4 space-y-4">
+        {/* Período e botão exportar */}
+        <div className="flex items-center justify-between bg-white border border-stone-200/90 rounded-xl px-3.5 py-2.5 shadow-2xs">
+          <div className="flex items-center space-x-2 text-xs font-semibold text-stone-700">
+            <Calendar className="w-4 h-4 text-emerald-700" />
+            <span>{periodString}</span>
           </div>
+          <button
+            onClick={handleExportCsv}
+            className="flex items-center space-x-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>CSV</span>
+          </button>
+        </div>
 
-          {/* Segmented control: Resumo / Detalhado */}
-          <div className="grid grid-cols-2 p-1 bg-stone-200/80 rounded-xl text-xs font-semibold">
-            <button
-              onClick={() => setViewMode('resumo')}
-              className={`py-1.5 rounded-lg transition-all cursor-pointer ${
-                viewMode === 'resumo'
-                  ? 'bg-[#14532d] text-white shadow-2xs'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              Resumo
-            </button>
-            <button
-              onClick={() => setViewMode('detalhado')}
-              className={`py-1.5 rounded-lg transition-all cursor-pointer ${
-                viewMode === 'detalhado'
-                  ? 'bg-[#14532d] text-white shadow-2xs'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              Detalhado
-            </button>
-          </div>
-
-          {/* Quick filter toggle */}
-          {showFilterModal && (
-            <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
-              <label className="text-[11px] font-bold text-stone-600 block mb-1">
-                Filtrar por nome
-              </label>
-              <input
-                type="text"
-                value={filterWorker}
-                onChange={(e) => setFilterWorker(e.target.value)}
-                placeholder="Ex: João..."
-                className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-xs"
-              />
+        {/* Cards de resumo geral */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-white p-3 rounded-xl border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-blue-600 mb-1">
+              <span className="text-[10px] font-bold text-stone-500">Caixas</span>
+              <Package className="w-3.5 h-3.5" />
             </div>
-          )}
+            <div className="text-lg font-black text-blue-700">{totalBoxes}</div>
+          </div>
 
-          {/* Main Table */}
-          <div className="bg-white rounded-xl border border-stone-200 shadow-2xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-[11px]">
-                <thead>
-                  <tr className="bg-stone-50 border-b border-stone-200 text-stone-600 font-bold">
-                    <th className="py-2.5 px-2.5 whitespace-nowrap">Trabalhador</th>
-                    <th className="py-2.5 px-2 text-center whitespace-nowrap">
-                      Dias<br />Trabalhados
-                    </th>
-                    <th className="py-2.5 px-2 text-center whitespace-nowrap">Caixas</th>
-                    <th className="py-2.5 px-2 text-right whitespace-nowrap">
-                      Diárias<br />(R$)
-                    </th>
-                    <th className="py-2.5 px-2 text-center whitespace-nowrap">Faltas</th>
-                    <th className="py-2.5 px-2 text-right whitespace-nowrap">
-                      Total<br />Produção (R$)
-                    </th>
-                    <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
-                      Total<br />Geral (R$)
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-100 text-stone-800">
-                  {rows.map((row) => (
-                    <tr
-                      key={row.workerId}
-                      onClick={() => {
-                        setSelectedWorkerId(row.workerId);
-                        navigateTo('worker_history');
-                      }}
-                      className="hover:bg-emerald-50/50 cursor-pointer transition-colors"
+          <div className="bg-white p-3 rounded-xl border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-red-500 mb-1">
+              <span className="text-[10px] font-bold text-stone-500">Faltas</span>
+              <AlertTriangle className="w-3.5 h-3.5" />
+            </div>
+            <div className="text-lg font-black text-red-600">{totalAbsences}</div>
+          </div>
+
+          <div className="bg-white p-3 rounded-xl border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-emerald-600 mb-1">
+              <span className="text-[10px] font-bold text-stone-500">Total</span>
+              <Wallet className="w-3.5 h-3.5" />
+            </div>
+            <div className="text-sm font-black text-emerald-700 mt-1">
+              R$ {totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+
+        {/* Abas Resumo / Detalhado */}
+        <div className="grid grid-cols-2 bg-stone-200/80 p-1 rounded-xl">
+          <button
+            onClick={() => setActiveTab('resumo')}
+            className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'resumo'
+                ? 'bg-white text-emerald-800 shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            Por Trabalhador
+          </button>
+          <button
+            onClick={() => setActiveTab('detalhado')}
+            className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'detalhado'
+                ? 'bg-white text-emerald-800 shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            Detalhado ({launches.length})
+          </button>
+        </div>
+
+        {activeTab === 'resumo' ? (
+          <div className="space-y-2.5">
+            {workerSummaries.map(({ worker, boxes, absences, prodVal, diarVal, total }) => (
+              <div
+                key={worker.id}
+                onClick={() => {
+                  setSelectedWorkerId(worker.id);
+                  navigateTo('worker_history');
+                }}
+                className="bg-white p-3.5 rounded-2xl border border-stone-200/90 shadow-2xs hover:border-emerald-400 transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div
+                      className={`w-9 h-9 rounded-full ${
+                        worker.status === 'inativo' ? 'bg-amber-600' : 'bg-[#155e2d]'
+                      } text-white font-bold text-xs flex items-center justify-center`}
                     >
-                      <td className="py-2.5 px-2.5 font-semibold text-stone-900 whitespace-nowrap">
-                        {row.name}
-                      </td>
-                      <td className="py-2.5 px-2 text-center">{row.workedDays}</td>
-                      <td className="py-2.5 px-2 text-center font-medium text-blue-700">
-                        {row.boxes}
-                      </td>
-                      <td className="py-2.5 px-2 text-right">
-                        {row.diarias.toFixed(2).replace('.', ',')}
-                      </td>
-                      <td className="py-2.5 px-2 text-center text-red-600 font-bold">
-                        {row.faltas}
-                      </td>
-                      <td className="py-2.5 px-2 text-right">
-                        {row.totalProduction.toFixed(2).replace('.', ',')}
-                      </td>
-                      <td className="py-2.5 px-2.5 text-right font-bold text-stone-900">
-                        {row.totalGeneral.toFixed(2).replace('.', ',')}
-                      </td>
-                    </tr>
+                      {worker.avatarInitials}
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-stone-900">{worker.name}</div>
+                      <div className="text-[11px] text-stone-500">
+                        {boxes} caixas • {absences} falta{absences !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="text-right">
+                      <div className="text-sm font-black text-emerald-700">
+                        R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[10px] text-stone-400">
+                        Prod: {prodVal.toFixed(0)} | Diár: {diarVal.toFixed(0)}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-stone-400" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Filtro por tipo */}
+            <div className="flex space-x-1.5 overflow-x-auto pb-1">
+              {(['todos', 'producao', 'diaria', 'falta'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTypeFilter(t)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                    typeFilter === t
+                      ? 'bg-[#14532d] text-white'
+                      : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+                  }`}
+                >
+                  {t === 'todos'
+                    ? 'Todos'
+                    : t === 'producao'
+                    ? 'Produção'
+                    : t === 'diaria'
+                    ? 'Diárias'
+                    : 'Faltas'}
+                </button>
+              ))}
+            </div>
+
+            {/* Lista detalhada */}
+            <div className="bg-white rounded-2xl border border-stone-200/90 shadow-2xs overflow-hidden">
+              {filteredLaunches.length === 0 ? (
+                <div className="p-6 text-center text-stone-400 space-y-2">
+                  <FileText className="w-8 h-8 mx-auto text-stone-300" />
+                  <p className="text-xs font-medium text-stone-500">
+                    Nenhum lançamento encontrado para este filtro.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-stone-100">
+                  {filteredLaunches.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-3 flex items-center justify-between hover:bg-stone-50 transition-colors"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-bold text-stone-900">
+                            {item.workerName}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              item.type === 'producao'
+                                ? 'bg-blue-100 text-blue-800'
+                                : item.type === 'diaria'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {item.type === 'producao'
+                              ? 'Produção'
+                              : item.type === 'diaria'
+                              ? 'Diária'
+                              : 'Falta'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-stone-500">
+                          {item.date} • {item.description}
+                        </div>
+                      </div>
+                      <div className="text-xs font-extrabold text-stone-900">
+                        R$ {item.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-stone-50 border-t-2 border-stone-300 font-extrabold text-stone-900">
-                    <td className="py-3 px-2.5 uppercase tracking-wider text-[10px]">
-                      TOTAIS
-                    </td>
-                    <td className="py-3 px-2 text-center">{totals.workedDays}</td>
-                    <td className="py-3 px-2 text-center text-blue-800 font-extrabold">
-                      {totals.boxes}
-                    </td>
-                    <td className="py-3 px-2 text-right">
-                      {totals.diarias.toFixed(2).replace('.', ',')}
-                    </td>
-                    <td className="py-3 px-2 text-center text-red-600">
-                      {totals.faltas}
-                    </td>
-                    <td className="py-3 px-2 text-right text-emerald-800">
-                      {totals.totalProduction.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-3 px-2.5 text-right text-emerald-950 font-black">
-                      {totals.totalGeneral.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-
-        {/* Bottom Actions: Exportar PDF & Compartilhar */}
-        <div className="grid grid-cols-2 gap-3 pt-3">
-          <button
-            onClick={handleExportPdf}
-            className="flex items-center justify-center space-x-2 py-3 px-4 bg-white hover:bg-stone-50 border border-stone-300 text-stone-800 font-bold rounded-xl text-xs shadow-2xs transition-all cursor-pointer"
-          >
-            <FileDown className="w-4 h-4 text-stone-600" />
-            <span>Exportar PDF</span>
-          </button>
-
-          <button
-            onClick={handleShare}
-            className="flex items-center justify-center space-x-2 py-3 px-4 bg-[#15803d] hover:bg-emerald-800 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
-          >
-            <Share2 className="w-4 h-4 text-white" />
-            <span>Compartilhar</span>
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );

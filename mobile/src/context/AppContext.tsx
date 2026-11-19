@@ -79,7 +79,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Persistent state initialized from localStorage or defaults
   const [workers, setWorkers] = useState<Worker[]>(() => {
     const saved = localStorage.getItem('agroturma_workers');
     return saved ? JSON.parse(saved) : INITIAL_WORKERS;
@@ -125,7 +124,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('agroturma_closure', JSON.stringify(weekClosure));
   }, [weekClosure]);
 
-  // Carrega os trabalhadores reais do MariaDB ao iniciar
+  const refreshPayments = () => {
+    fetch('/api/payments')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setPayments(data);
+          if (data.length > 0) {
+            setSelectedPaymentId((curr) =>
+              data.some((p) => p.id === curr) ? curr : data[0].id
+            );
+          }
+        }
+      })
+      .catch((err) => console.error('Erro ao buscar pagamentos:', err));
+  };
+
+  const refreshAuditLogs = () => {
+    fetch('/api/audit-logs')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAuditLogs(data);
+        }
+      })
+      .catch((err) => console.error('Erro ao buscar auditoria:', err));
+  };
+
+  const refreshWeekClosure = () => {
+    fetch('/api/week-closure')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && typeof data.isClosed === 'boolean') {
+          setWeekClosure((prev) => ({
+            ...prev,
+            isClosed: data.isClosed,
+            closedAt: data.closedAt,
+            closedBy: data.closedBy,
+          }));
+          if (data.period) {
+            setPeriodString(data.period);
+          }
+        }
+      })
+      .catch((err) => console.error('Erro ao buscar fechamento semanal:', err));
+  };
+
+  // Carga inicial completa do MariaDB
   useEffect(() => {
     fetch('/api/workers')
       .then((res) => res.json())
@@ -135,7 +180,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setSelectedWorkerId(data[0].id);
         }
       })
-      .catch((err) => console.error('Erro ao buscar trabalhadores da API:', err));
+      .catch((err) => console.error('Erro ao buscar trabalhadores:', err));
+
+    fetch('/api/launches')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setLaunches(data);
+        }
+      })
+      .catch((err) => console.error('Erro ao buscar lançamentos:', err));
+
+    refreshPayments();
+    refreshAuditLogs();
+    refreshWeekClosure();
   }, []);
 
   const showToast = (msg: string) => {
@@ -174,21 +232,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newWorker: Worker = await res.json();
 
       setWorkers((prev) => [newWorker, ...prev]);
-
-      const newPayment: PaymentRecord = {
-        id: 'p_' + Date.now(),
-        workerId: newWorker.id,
-        workerName: newWorker.name,
-        period: periodString,
-        totalDiarias: 0,
-        totalProducao: 0,
-        boxesCount: 0,
-        grossTotal: 0,
-        discounts: 0,
-        netTotal: 0,
-        status: 'a_pagar',
-      };
-      setPayments((prev) => [newPayment, ...prev]);
+      refreshPayments();
+      refreshAuditLogs();
       showToast(`Trabalhador ${newWorker.name} cadastrado no banco!`);
       navigateTo('workers');
     } catch (err) {
@@ -207,6 +252,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setWorkers((prev) =>
         prev.map((w) => (w.id === id ? { ...w, status } : w))
       );
+      refreshAuditLogs();
       showToast('Status do trabalhador atualizado no banco!');
     } catch (err) {
       console.error(err);
@@ -214,96 +260,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addLaunch = (launchData: Omit<Launch, 'id' | 'createdAt'>) => {
-    const newLaunch: Launch = {
-      ...launchData,
-      id: 'l_' + Date.now(),
-      createdAt: new Date().toISOString(),
-    };
-    setLaunches((prev) => [newLaunch, ...prev]);
+  const addLaunch = async (launchData: Omit<Launch, 'id' | 'createdAt'>) => {
+    try {
+      const res = await fetch('/api/launches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(launchData),
+      });
+      if (!res.ok) throw new Error('Falha ao salvar lançamento no banco');
+      const newLaunch: Launch = await res.json();
 
-    setPayments((prev) =>
-      prev.map((p) => {
-        if (p.workerId === launchData.workerId) {
-          const addBoxes = launchData.quantity || 0;
-          const addProd = launchData.type === 'producao' ? launchData.totalValue : 0;
-          const addDiaria = launchData.type === 'diaria' ? launchData.totalValue : 0;
-          const gross = p.grossTotal + launchData.totalValue;
-          const net = gross - p.discounts;
-          return {
-            ...p,
-            boxesCount: p.boxesCount + addBoxes,
-            totalProducao: p.totalProducao + addProd,
-            totalDiarias: p.totalDiarias + addDiaria,
-            grossTotal: gross,
-            netTotal: net,
-          };
-        }
-        return p;
-      })
-    );
-
-    const now = new Date();
-    const timeStr = `${launchData.date} às ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    const log: AuditLog = {
-      id: 'a_' + Date.now(),
-      date: launchData.date,
-      timestamp: timeStr,
-      workerId: launchData.workerId,
-      workerName: launchData.workerName,
-      changeTitle:
-        launchData.type === 'producao'
-          ? `Produção ${launchData.quantity} caixas`
-          : launchData.type === 'diaria'
-          ? `Diária - R$ ${launchData.totalValue.toFixed(2)}`
-          : 'Falta',
-      previousValue: 'Sem registro',
-      newValue:
-        launchData.type === 'falta'
-          ? 'Falta'
-          : `R$ ${launchData.totalValue.toFixed(2)}`,
-      alteredBy: 'Maria Aparecida',
-      reason: launchData.notes || 'Lançamento registrado via aplicativo',
-    };
-    setAuditLogs((prev) => [log, ...prev]);
-
-    showToast('Lançamento salvo com sucesso!');
-    navigateTo('dashboard');
+      setLaunches((prev) => [newLaunch, ...prev]);
+      refreshPayments();
+      refreshAuditLogs();
+      showToast('Lançamento salvo no banco de dados!');
+      navigateTo('dashboard');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao salvar lançamento no banco.');
+    }
   };
 
-  const markPaymentAsPaid = (paymentId: string, method: string = 'PIX') => {
-    const now = new Date();
-    const paidAt = `${now.toLocaleDateString('pt-BR')} às ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    setPayments((prev) =>
-      prev.map((p) =>
-        p.id === paymentId
-          ? {
-              ...p,
-              status: 'pago',
-              paidAt,
-              paymentMethod: method,
-            }
-          : p
-      )
-    );
-    showToast('Pagamento marcado como Pago!');
+  const markPaymentAsPaid = async (paymentId: string, method: string = 'PIX') => {
+    try {
+      const payment = payments.find((p) => p.id === paymentId);
+      if (!payment) return;
+
+      const res = await fetch(`/api/payments/${payment.workerId}/pay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method,
+          netTotal: payment.netTotal,
+          workerName: payment.workerName,
+        }),
+      });
+      if (!res.ok) throw new Error('Falha ao confirmar pagamento');
+      const result = await res.json();
+
+      setPayments((prev) =>
+        prev.map((p) =>
+          p.id === paymentId
+            ? {
+                ...p,
+                status: 'pago',
+                paidAt: result.paidAt,
+                paymentMethod: result.paymentMethod,
+              }
+            : p
+        )
+      );
+      refreshAuditLogs();
+      showToast('Pagamento confirmado e salvo no banco!');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao confirmar pagamento no banco.');
+    }
   };
 
-  const toggleWeekClosure = () => {
-    setWeekClosure((prev) => {
-      const isClosing = !prev.isClosed;
-      return {
+  const toggleWeekClosure = async () => {
+    try {
+      const res = await fetch('/api/week-closure/toggle', {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Falha ao alternar fechamento');
+      const data = await res.json();
+
+      setWeekClosure((prev) => ({
         ...prev,
-        isClosed: isClosing,
-        closedAt: isClosing ? new Date().toLocaleString('pt-BR') : undefined,
-        closedBy: isClosing ? 'Administrador da Fazenda' : undefined,
-      };
-    });
-    showToast(
-      weekClosure.isClosed
-        ? 'Semana reaberta para edição!'
-        : 'Semana fechada com sucesso! Dados bloqueados.'
-    );
+        isClosed: data.isClosed,
+        closedAt: data.closedAt,
+        closedBy: data.closedBy,
+      }));
+      refreshAuditLogs();
+      showToast(
+        data.isClosed
+          ? 'Semana fechada no banco! Lançamentos bloqueados.'
+          : 'Semana reaberta para edição!'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao atualizar fechamento da semana.');
+    }
   };
 
   const login = () => {

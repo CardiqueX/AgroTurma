@@ -1,97 +1,164 @@
-import React, { useState } from 'react';
-import { Calendar, Info } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock } from 'lucide-react';
 import { MobileHeader } from '../layout/MobileHeader';
 import { useApp } from '../../context/AppContext';
 
-export const LaunchDailyScreen: React.FC = () => {
-  const { workers, addLaunch } = useApp();
+const getTodayIso = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
 
-  const [date, setDate] = useState('15/06/2025');
-  const [workerId, setWorkerId] = useState(
-    workers.find((w) => w.name.includes('Maria'))?.id || workers[0]?.id || 'w2'
-  );
-  const [dailyValue, setDailyValue] = useState<number | ''>(80.0);
-  const [notes, setNotes] = useState('');
+const formatIsoToBr = (iso: string) => {
+  if (!iso || !iso.includes('-')) return iso;
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+export const LaunchDailyScreen: React.FC = () => {
+  const { workers, addLaunch, weekClosure, showToast } = useApp();
+
+  const activeWorkers = workers.filter((w) => w.status === 'ativo');
+
+  const [date, setDate] = useState<string>(getTodayIso);
+  const [workerId, setWorkerId] = useState<string>(activeWorkers[0]?.id || '');
+  const [role, setRole] = useState<string>('Diária Geral');
+  const [dailyValue, setDailyValue] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
+
+  useEffect(() => {
+    const ativos = workers.filter((w) => w.status === 'ativo');
+    if (ativos.length > 0 && !ativos.some((w) => w.id === workerId)) {
+      setWorkerId(ativos[0].id);
+    } else if (ativos.length === 0) {
+      setWorkerId('');
+    }
+  }, [workers, workerId]);
+
+  const numericValue = Number(String(dailyValue).replace(',', '.')) || 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const worker = workers.find((w) => w.id === workerId) || workers[0];
-    const val = typeof dailyValue === 'number' ? dailyValue : 80.0;
+
+    if (weekClosure.isClosed) {
+      showToast('Semana fechada! Reabra a semana para lançar.');
+      return;
+    }
+
+    const selectedWorker = activeWorkers.find((w) => w.id === workerId);
+    if (!selectedWorker) {
+      showToast('Selecione um trabalhador ativo.');
+      return;
+    }
+
+    if (numericValue <= 0) {
+      showToast('Informe o valor da diária.');
+      return;
+    }
 
     addLaunch({
-      date,
-      workerId: worker.id,
-      workerName: worker.name,
+      date: formatIsoToBr(date),
+      workerId: selectedWorker.id,
+      workerName: selectedWorker.name,
       type: 'diaria',
-      description: 'Diária',
-      totalValue: val,
+      description: role,
+      totalValue: numericValue,
       notes: notes.trim(),
     });
   };
 
   return (
     <div className="flex flex-col min-h-full bg-stone-100 text-stone-900 pb-6">
-      <MobileHeader title="Lançar Diária" showBack showBell />
+      <MobileHeader title="Lançar Diária" showBack />
 
-      <form onSubmit={handleSubmit} className="p-4 space-y-4 flex-1 flex flex-col justify-between">
-        <div className="space-y-3.5 bg-white p-4 rounded-2xl border border-stone-200/90 shadow-2xs">
+      <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        {weekClosure.isClosed && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center space-x-2 text-xs text-amber-800 font-medium">
+            <Lock className="w-4 h-4 shrink-0" />
+            <span>A semana atual está fechada para novos lançamentos.</span>
+          </div>
+        )}
+
+        <div className="bg-white rounded-2xl border border-stone-200/90 p-4 shadow-2xs space-y-4">
           {/* Data */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Data
             </label>
-            <div className="relative">
-              <input
-                type="text"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
-              />
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-emerald-800">
-                <Calendar className="w-4 h-4" />
-              </div>
-            </div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              required
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+            />
           </div>
 
-          {/* Trabalhador * */}
+          {/* Trabalhador (apenas ativos) */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Trabalhador *
             </label>
             <select
               value={workerId}
               onChange={(e) => setWorkerId(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all cursor-pointer"
+              required
+              disabled={activeWorkers.length === 0}
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             >
-              {workers.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name} {w.status === 'inativo' ? '(Inativo)' : ''}
-                </option>
-              ))}
+              {activeWorkers.length === 0 ? (
+                <option value="">Nenhum trabalhador ativo cadastrado</option>
+              ) : (
+                activeWorkers.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
-          {/* Valor da diária (R$) * */}
+          {/* Função */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
+              Função / Atividade *
+            </label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+            >
+              <option value="Diária Geral">Diária Geral</option>
+              <option value="Apontador">Apontador</option>
+              <option value="Fiscal">Fiscal</option>
+              <option value="Tratorista">Tratorista</option>
+              <option value="Motorista">Motorista</option>
+              <option value="Caixeiro">Caixeiro</option>
+            </select>
+          </div>
+
+          {/* Valor da Diária */}
+          <div>
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Valor da diária (R$) *
             </label>
             <input
               type="number"
-              step="5.00"
-              required
+              min="0.01"
+              step="0.01"
               value={dailyValue}
-              onChange={(e) =>
-                setDailyValue(e.target.value === '' ? '' : Number(e.target.value))
-              }
-              placeholder="80,00"
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+              onChange={(e) => setDailyValue(e.target.value)}
+              placeholder="Ex: 80,00"
+              required
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             />
           </div>
 
-          {/* Observação (opcional) */}
+          {/* Observação */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Observação (opcional)
             </label>
             <input
@@ -99,29 +166,18 @@ export const LaunchDailyScreen: React.FC = () => {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Digite uma observação"
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             />
           </div>
         </div>
 
-        <div className="space-y-3 pt-2">
-          <button
-            type="submit"
-            className="w-full py-3 px-4 bg-[#14532d] hover:bg-emerald-800 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all text-sm cursor-pointer"
-          >
-            Salvar Lançamento
-          </button>
-
-          {/* Info callout */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center space-x-2.5 text-blue-900 text-xs">
-            <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-blue-700">
-              <Info className="w-4 h-4" />
-            </div>
-            <span className="leading-tight text-[11px] font-medium">
-              Essa diária será somada no cálculo de pagamento do trabalhador no período.
-            </span>
-          </div>
-        </div>
+        <button
+          type="submit"
+          disabled={weekClosure.isClosed || activeWorkers.length === 0}
+          className="w-full py-3.5 bg-[#14532d] hover:bg-[#166534] disabled:bg-stone-400 text-white font-bold text-sm rounded-xl shadow-sm transition-colors cursor-pointer"
+        >
+          Salvar Diária
+        </button>
       </form>
     </div>
   );

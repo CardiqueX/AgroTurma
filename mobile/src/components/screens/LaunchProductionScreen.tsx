@@ -1,41 +1,81 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar } from 'lucide-react';
+import { Calendar, Lock } from 'lucide-react';
 import { MobileHeader } from '../layout/MobileHeader';
 import { useApp } from '../../context/AppContext';
 
+const getTodayIso = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatIsoToBr = (iso: string) => {
+  if (!iso || !iso.includes('-')) return iso;
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
 export const LaunchProductionScreen: React.FC = () => {
-  const { workers, addLaunch } = useApp();
+  const { workers, addLaunch, weekClosure, showToast } = useApp();
 
-  const [date, setDate] = useState('15/06/2025');
-  const [workerId, setWorkerId] = useState(workers[0]?.id || 'w1');
-  const [productService, setProductService] = useState('Caixa de Alho');
-  const [quantity, setQuantity] = useState<number | ''>(18);
-  const [unitValue, setUnitValue] = useState<number | ''>(5.0);
-  const [totalValue, setTotalValue] = useState<number>(90.0);
-  const [notes, setNotes] = useState('');
+  const activeWorkers = workers.filter((w) => w.status === 'ativo');
 
-  // Dynamically compute total value
+  const [date, setDate] = useState<string>(getTodayIso);
+  const [workerId, setWorkerId] = useState<string>(activeWorkers[0]?.id || '');
+  const [productService, setProductService] = useState<string>('Caixa de Alho');
+  const [quantity, setQuantity] = useState<string>('');
+  const [unitValue, setUnitValue] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
+
+  // Garante que sempre haja um trabalhador ativo selecionado ao carregar da API
   useEffect(() => {
-    const q = typeof quantity === 'number' ? quantity : 0;
-    const v = typeof unitValue === 'number' ? unitValue : 0;
-    setTotalValue(Number((q * v).toFixed(2)));
-  }, [quantity, unitValue]);
+    const ativos = workers.filter((w) => w.status === 'ativo');
+    if (ativos.length > 0 && !ativos.some((w) => w.id === workerId)) {
+      setWorkerId(ativos[0].id);
+    } else if (ativos.length === 0) {
+      setWorkerId('');
+    }
+  }, [workers, workerId]);
+
+  const numericQty = Number(quantity) || 0;
+  const numericUnit = Number(String(unitValue).replace(',', '.')) || 0;
+  const totalValue = numericQty * numericUnit;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const worker = workers.find((w) => w.id === workerId) || workers[0];
-    const qty = typeof quantity === 'number' ? quantity : 0;
-    const uVal = typeof unitValue === 'number' ? unitValue : 0;
+
+    if (weekClosure.isClosed) {
+      showToast('Semana fechada! Reabra a semana para lançar.');
+      return;
+    }
+
+    const selectedWorker = activeWorkers.find((w) => w.id === workerId);
+    if (!selectedWorker) {
+      showToast('Selecione um trabalhador ativo.');
+      return;
+    }
+
+    if (numericQty <= 0) {
+      showToast('Informe a quantidade de caixas.');
+      return;
+    }
+
+    if (numericUnit <= 0) {
+      showToast('Informe o valor por caixa.');
+      return;
+    }
 
     addLaunch({
-      date,
-      workerId: worker.id,
-      workerName: worker.name,
+      date: formatIsoToBr(date),
+      workerId: selectedWorker.id,
+      workerName: selectedWorker.name,
       type: 'producao',
-      description: `${qty} caixas`,
+      description: `${numericQty} caixas`,
       productService,
-      quantity: qty,
-      unitValue: uVal,
+      quantity: numericQty,
+      unitValue: numericUnit,
       totalValue,
       notes: notes.trim(),
     });
@@ -45,114 +85,123 @@ export const LaunchProductionScreen: React.FC = () => {
     <div className="flex flex-col min-h-full bg-stone-100 text-stone-900 pb-6">
       <MobileHeader title="Lançar Produção" showBack />
 
-      <form onSubmit={handleSubmit} className="p-4 space-y-4 flex-1 flex flex-col justify-between">
-        <div className="space-y-3.5 bg-white p-4 rounded-2xl border border-stone-200/90 shadow-2xs">
+      <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        {weekClosure.isClosed && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center space-x-2 text-xs text-amber-800 font-medium">
+            <Lock className="w-4 h-4 shrink-0" />
+            <span>A semana atual está fechada para novos lançamentos.</span>
+          </div>
+        )}
+
+        <div className="bg-white rounded-2xl border border-stone-200/90 p-4 shadow-2xs space-y-4">
           {/* Data */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Data
             </label>
             <div className="relative">
               <input
-                type="text"
+                type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+                required
+                className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
               />
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-emerald-800">
-                <Calendar className="w-4 h-4" />
-              </div>
+              <Calendar className="w-4 h-4 text-emerald-700 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none hidden" />
             </div>
           </div>
 
-          {/* Trabalhador * */}
+          {/* Trabalhador (apenas ativos) */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Trabalhador *
             </label>
             <select
               value={workerId}
               onChange={(e) => setWorkerId(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all cursor-pointer"
+              required
+              disabled={activeWorkers.length === 0}
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             >
-              {workers.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name} {w.status === 'inativo' ? '(Inativo)' : ''}
-                </option>
-              ))}
+              {activeWorkers.length === 0 ? (
+                <option value="">Nenhum trabalhador ativo cadastrado</option>
+              ) : (
+                activeWorkers.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
-          {/* Produto / Serviço * */}
+          {/* Produto / Serviço */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Produto / Serviço *
             </label>
             <select
               value={productService}
               onChange={(e) => setProductService(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all cursor-pointer"
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             >
               <option value="Caixa de Alho">Caixa de Alho</option>
-              <option value="Colheita Café (Balaio)">Colheita Café (Balaio)</option>
-              <option value="Cebola (Saco 20kg)">Cebola (Saco 20kg)</option>
-              <option value="Tomate (Caixa 22kg)">Tomate (Caixa 22kg)</option>
-              <option value="Laranja (Caixa)">Laranja (Caixa)</option>
+              <option value="Corte de Alho">Corte de Alho</option>
+              <option value="Arranquio">Arranquio</option>
+              <option value="Toalete / Limpeza">Toalete / Limpeza</option>
             </select>
           </div>
 
-          {/* Quantidade (caixas) * */}
+          {/* Quantidade */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Quantidade (caixas) *
             </label>
             <input
               type="number"
               min="1"
-              required
+              step="1"
               value={quantity}
-              onChange={(e) =>
-                setQuantity(e.target.value === '' ? '' : Number(e.target.value))
-              }
-              placeholder="0"
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="Digite a quantidade de caixas"
+              required
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             />
           </div>
 
-          {/* Valor por caixa (R$) */}
+          {/* Valor por caixa */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
-              Valor por caixa (R$)
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
+              Valor por caixa (R$) *
             </label>
             <input
               type="number"
-              step="0.50"
-              min="0"
+              min="0.01"
+              step="0.01"
               value={unitValue}
-              onChange={(e) =>
-                setUnitValue(e.target.value === '' ? '' : Number(e.target.value))
-              }
-              placeholder="5,00"
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+              onChange={(e) => setUnitValue(e.target.value)}
+              placeholder="Ex: 5,00"
+              required
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             />
           </div>
 
-          {/* Total (R$) Box */}
-          <div className="bg-[#f0fdf4] border border-emerald-200 rounded-xl p-3.5">
-            <span className="block text-[11px] font-bold text-emerald-800 uppercase tracking-wide">
+          {/* Total calculado */}
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
+            <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">
               Total (R$)
-            </span>
-            <span className="text-xl font-black text-emerald-950 mt-0.5 block">
+            </div>
+            <div className="text-2xl font-black text-stone-900 mt-0.5">
               {totalValue.toLocaleString('pt-BR', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
-            </span>
+            </div>
           </div>
 
-          {/* Observação (opcional) */}
+          {/* Observação */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+            <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Observação (opcional)
             </label>
             <input
@@ -160,19 +209,18 @@ export const LaunchProductionScreen: React.FC = () => {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Digite uma observação"
-              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-xs text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
             />
           </div>
         </div>
 
-        <div className="pt-3">
-          <button
-            type="submit"
-            className="w-full py-3 px-4 bg-[#14532d] hover:bg-emerald-800 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all text-sm cursor-pointer"
-          >
-            Salvar Lançamento
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={weekClosure.isClosed || activeWorkers.length === 0}
+          className="w-full py-3.5 bg-[#14532d] hover:bg-[#166534] disabled:bg-stone-400 text-white font-bold text-sm rounded-xl shadow-sm transition-colors cursor-pointer"
+        >
+          Salvar Lançamento
+        </button>
       </form>
     </div>
   );
