@@ -12,6 +12,7 @@ const pool = mysql.createPool({
   user: 'admin',
   password: 'admin123',
   database: 'agroturma',
+  charset: 'utf8mb4',
   waitForConnections: true,
   connectionLimit: 10,
 });
