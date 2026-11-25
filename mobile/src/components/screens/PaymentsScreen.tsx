@@ -29,7 +29,6 @@ export const PaymentsScreen: React.FC = () => {
           <Calendar className="w-4 h-4 text-stone-400" />
         </div>
 
-        {/* Tab switcher: A Pagar (6) | Pagos (3) */}
         <div className="grid grid-cols-2 p-1 bg-stone-200/80 rounded-xl text-xs font-semibold">
           <button
             onClick={() => setTab('a_pagar')}
