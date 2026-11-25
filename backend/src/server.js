@@ -355,6 +355,19 @@ app.post('/api/launches', async (req, res) => {
     } = req.body;
 
     const sqlDate = toSqlDate(date);
+    const [closedPeriod] = await pool.query(
+      `SELECT id FROM fechamentos_semanais
+   WHERE status = 'FECHADO'
+     AND ? BETWEEN data_inicio AND data_fim
+   LIMIT 1`,
+      [sqlDate]
+    );
+
+    if (closedPeriod.length > 0) {
+      return res.status(409).json({
+        error: 'Não é possível lançar dados em um período já fechado.',
+      });
+    }
     const trabId = Number(workerId);
     let insertedId = '';
     let numericId = 0;
@@ -582,27 +595,145 @@ app.post('/api/payments/:workerId/pay', async (req, res) => {
     res.status(500).json({ error: 'Erro ao confirmar pagamento no banco' });
   }
 });
-
-// ROTA 9: Consultar Estado do Fechamento da Semana
-app.get('/api/week-closure', async (req, res) => {
+// ROTA 9: Estornar pagamento
+app.post('/api/payments/:workerId/unpay', async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT * FROM fechamentos_semanais ORDER BY id DESC LIMIT 1'
+    await ensurePaymentsTable();
+
+    const trabId = Number(req.params.workerId);
+
+    const [result] = await pool.query(
+      `UPDATE pagamentos
+       SET status = 'a_pagar',
+           forma_pagamento = NULL,
+           valor_pago = 0,
+           pago_em = NULL
+       WHERE trabalhador_id = ?`,
+      [trabId]
     );
 
-    if (rows.length === 0) {
-      return res.json({ isClosed: false });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Pagamento não encontrado' });
     }
 
-    const row = rows[0];
-    const isClosed = String(row.status).toUpperCase() === 'FECHADO';
+    await registrarAuditoria({
+      tabela: 'pagamentos',
+      registroId: trabId,
+      campo: 'status',
+      valorAnterior: 'pago',
+      valorNovo: 'a_pagar',
+      motivo: `Estorno do pagamento do trabalhador #${trabId}`,
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao estornar pagamento:', error);
+    res.status(500).json({ error: 'Erro ao estornar pagamento' });
+  }
+});
+
+
+// ROTA 9: Consultar fechamento e resumo do período selecionado
+app.get('/api/week-closure', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    let inicio = startDate;
+    let fim = endDate;
+
+    if (!inicio || !fim) {
+      const [latest] = await pool.query(
+        'SELECT data_inicio, data_fim FROM fechamentos_semanais ORDER BY id DESC LIMIT 1'
+      );
+
+      if (latest.length) {
+        inicio = latest[0].data_inicio;
+        fim = latest[0].data_fim;
+      } else {
+        const [dates] = await pool.query(`
+          SELECT
+            DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AS inicio,
+            DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 6 DAY) AS fim
+        `);
+        inicio = dates[0].inicio;
+        fim = dates[0].fim;
+      }
+    }
+
+    const [closures] = await pool.query(
+      `SELECT * FROM fechamentos_semanais
+       WHERE data_inicio = ? AND data_fim = ?
+       ORDER BY id DESC LIMIT 1`,
+      [inicio, fim]
+    );
+
+    const closure = closures[0];
+
+    const [prod] = await pool.query(
+      `SELECT
+         COALESCE(SUM(quantidade_caixas), 0) AS caixas,
+         COALESCE(SUM(valor_total), 0) AS valor
+       FROM lancamentos_producao
+       WHERE data BETWEEN ? AND ?`,
+      [inicio, fim]
+    );
+
+    const [diarias] = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS valor
+       FROM lancamentos_diaria
+       WHERE data BETWEEN ? AND ?`,
+      [inicio, fim]
+    );
+
+    const [faltas] = await pool.query(
+      `SELECT COUNT(*) AS total FROM faltas
+       WHERE data BETWEEN ? AND ?`,
+      [inicio, fim]
+    );
+
+    const [workers] = await pool.query(
+      `SELECT COUNT(DISTINCT trabalhador_id) AS total
+       FROM (
+         SELECT trabalhador_id FROM lancamentos_producao
+         WHERE data BETWEEN ? AND ?
+         UNION
+         SELECT trabalhador_id FROM lancamentos_diaria
+         WHERE data BETWEEN ? AND ?
+       ) AS periodo`,
+      [inicio, fim, inicio, fim]
+    );
+
+    const [days] = await pool.query(
+      `SELECT COUNT(DISTINCT data) AS total
+       FROM (
+         SELECT data FROM lancamentos_producao
+         WHERE data BETWEEN ? AND ?
+         UNION
+         SELECT data FROM lancamentos_diaria
+         WHERE data BETWEEN ? AND ?
+       ) AS periodo`,
+      [inicio, fim, inicio, fim]
+    );
+
+    const totalBoxes = Number(prod[0].caixas || 0);
+    const totalProductionValue = Number(prod[0].valor || 0);
+    const totalDailyValue = Number(diarias[0].valor || 0);
 
     res.json({
-      id: row.id,
-      period: `${toBrDate(row.data_inicio)} a ${toBrDate(row.data_fim)}`,
-      isClosed,
-      closedAt: row.fechado_em ? toBrDateTime(row.fechado_em) : undefined,
-      closedBy: isClosed ? 'Administrador da Fazenda' : undefined,
+      id: closure?.id ?? null,
+      startDate: String(inicio).slice(0, 10),
+      endDate: String(fim).slice(0, 10),
+      period: `${toBrDate(inicio)} a ${toBrDate(fim)}`,
+      activeWorkers: Number(workers[0].total || 0),
+      workedDays: Number(days[0].total || 0),
+      totalBoxes,
+      absencesCount: Number(faltas[0].total || 0),
+      totalProductionValue,
+      totalDailyValue,
+      totalPayable: totalProductionValue + totalDailyValue,
+      isClosed: closure ? String(closure.status).toUpperCase() === 'FECHADO' : false,
+      closedAt: closure?.fechado_em ? toBrDateTime(closure.fechado_em) : undefined,
+      closedBy: closure?.status === 'FECHADO' ? 'Administrador da Fazenda' : undefined,
     });
   } catch (error) {
     console.error('Erro ao consultar fechamento semanal:', error);
@@ -610,60 +741,162 @@ app.get('/api/week-closure', async (req, res) => {
   }
 });
 
-// ROTA 10: Fechar / Reabrir Semana
+// ROTA 10: Fechar ou reabrir período selecionado
 app.post('/api/week-closure/toggle', async (req, res) => {
+  const { startDate, endDate } = req.body;
+
+  if (
+    !startDate ||
+    !endDate ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(endDate) ||
+    startDate > endDate
+  ) {
+    return res.status(400).json({ error: 'Informe um período válido.' });
+  }
+
+  let connection;
+
   try {
-    const [prodRows] = await pool.query(
-      'SELECT COALESCE(SUM(quantidade_caixas), 0) AS caixas, COALESCE(SUM(valor_total), 0) AS valorProd FROM lancamentos_producao'
-    );
-    const [diariaRows] = await pool.query(
-      'SELECT COALESCE(SUM(valor), 0) AS valorDiarias FROM lancamentos_diaria'
-    );
-    const [caixRows] = await pool.query(
-      'SELECT COALESCE(SUM(valor_recebido), 0) AS valorCaixeiros FROM carregamento_caixeiros'
-    );
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    const totalCaixas = Number(prodRows[0].caixas || 0);
-    const totalProd = Number(prodRows[0].valorProd || 0);
-    const totalDiarias = Number(diariaRows[0].valorDiarias || 0);
-    const totalPagar = totalProd + totalDiarias + Number(caixRows[0].valorCaixeiros || 0);
-
-    const [rows] = await pool.query(
-      'SELECT * FROM fechamentos_semanais ORDER BY id DESC LIMIT 1'
+    const [rows] = await connection.query(
+      `SELECT * FROM fechamentos_semanais
+       WHERE data_inicio = ? AND data_fim = ?
+       ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+      [startDate, endDate]
     );
 
     let fechamentoId;
     let oldStatus = 'ABERTO';
-    let newStatus = 'FECHADO';
+    let newStatus;
 
-    if (rows.length === 0) {
-      const [insertRes] = await pool.query(
-        `INSERT INTO fechamentos_semanais
-          (data_inicio, data_fim, status, total_producao_caixas, total_valor_producao, total_valor_diarias, total_a_pagar, fechado_em)
-         VALUES (DATE_SUB(CURDATE(), INTERVAL 7 DAY), CURDATE(), 'FECHADO', ?, ?, ?, ?, NOW())`,
-        [totalCaixas, totalProd, totalDiarias, totalPagar]
-      );
-      fechamentoId = insertRes.insertId;
-    } else {
-      const current = rows[0];
-      fechamentoId = current.id;
-      oldStatus = String(current.status).toUpperCase();
-      newStatus = oldStatus === 'FECHADO' ? 'ABERTO' : 'FECHADO';
+    if (rows.length && String(rows[0].status).toUpperCase() === 'FECHADO') {
+      fechamentoId = rows[0].id;
+      oldStatus = 'FECHADO';
+      newStatus = 'ABERTO';
 
-      await pool.query(
+      await connection.query(
         `UPDATE fechamentos_semanais
-         SET status = ?,
+         SET status = 'ABERTO', fechado_em = NULL
+         WHERE id = ?`,
+        [fechamentoId]
+      );
+    } else {
+      fechamentoId = rows.length ? rows[0].id : null;
+
+      const [overlap] = await connection.query(
+        `SELECT id FROM fechamentos_semanais
+         WHERE status = 'FECHADO'
+           AND data_inicio <= ?
+           AND data_fim >= ?
+           AND id <> ?
+         LIMIT 1`,
+        [endDate, startDate, fechamentoId || 0]
+      );
+
+      if (overlap.length) {
+        await connection.rollback();
+        return res.status(409).json({
+          error: 'Esse período possui datas que já pertencem a outro fechamento.',
+        });
+      }
+
+      if (!fechamentoId) {
+        const [insert] = await connection.query(
+          `INSERT INTO fechamentos_semanais
+           (data_inicio, data_fim, status)
+           VALUES (?, ?, 'ABERTO')`,
+          [startDate, endDate]
+        );
+        fechamentoId = insert.insertId;
+      }
+
+      const [conflicts] = await connection.query(
+        `SELECT COUNT(*) AS total FROM (
+          SELECT fechamento_id FROM lancamentos_producao
+          WHERE data BETWEEN ? AND ?
+            AND fechamento_id IS NOT NULL AND fechamento_id <> ?
+          UNION ALL
+          SELECT fechamento_id FROM lancamentos_diaria
+          WHERE data BETWEEN ? AND ?
+            AND fechamento_id IS NOT NULL AND fechamento_id <> ?
+          UNION ALL
+          SELECT fechamento_id FROM faltas
+          WHERE data BETWEEN ? AND ?
+            AND fechamento_id IS NOT NULL AND fechamento_id <> ?
+        ) AS conflitos`,
+        [
+          startDate, endDate, fechamentoId,
+          startDate, endDate, fechamentoId,
+          startDate, endDate, fechamentoId,
+        ]
+      );
+
+      if (Number(conflicts[0].total) > 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          error: 'Existem lançamentos vinculados a outro fechamento nesse período.',
+        });
+      }
+
+      const [prod] = await connection.query(
+        `SELECT
+           COALESCE(SUM(quantidade_caixas), 0) AS caixas,
+           COALESCE(SUM(valor_total), 0) AS valor
+         FROM lancamentos_producao WHERE data BETWEEN ? AND ?`,
+        [startDate, endDate]
+      );
+
+      const [diarias] = await connection.query(
+        `SELECT COALESCE(SUM(valor), 0) AS valor
+         FROM lancamentos_diaria WHERE data BETWEEN ? AND ?`,
+        [startDate, endDate]
+      );
+
+      const totalCaixas = Number(prod[0].caixas || 0);
+      const totalProd = Number(prod[0].valor || 0);
+      const totalDiarias = Number(diarias[0].valor || 0);
+
+      await connection.query(
+        `UPDATE fechamentos_semanais
+         SET status = 'FECHADO',
              total_producao_caixas = ?,
              total_valor_producao = ?,
              total_valor_diarias = ?,
              total_a_pagar = ?,
-             fechado_em = ${newStatus === 'FECHADO' ? 'NOW()' : 'NULL'}
+             fechado_em = NOW()
          WHERE id = ?`,
-        [newStatus, totalCaixas, totalProd, totalDiarias, totalPagar, fechamentoId]
+        [totalCaixas, totalProd, totalDiarias, totalProd + totalDiarias, fechamentoId]
       );
+
+      await connection.query(
+        `UPDATE lancamentos_producao
+         SET fechamento_id = ?
+         WHERE data BETWEEN ? AND ? AND fechamento_id IS NULL`,
+        [fechamentoId, startDate, endDate]
+      );
+
+      await connection.query(
+        `UPDATE lancamentos_diaria
+         SET fechamento_id = ?
+         WHERE data BETWEEN ? AND ? AND fechamento_id IS NULL`,
+        [fechamentoId, startDate, endDate]
+      );
+
+      await connection.query(
+        `UPDATE faltas
+         SET fechamento_id = ?
+         WHERE data BETWEEN ? AND ? AND fechamento_id IS NULL`,
+        [fechamentoId, startDate, endDate]
+      );
+
+      oldStatus = rows.length ? String(rows[0].status).toUpperCase() : 'ABERTO';
+      newStatus = 'FECHADO';
     }
 
-    const isClosed = newStatus === 'FECHADO';
+    await connection.commit();
 
     await registrarAuditoria({
       tabela: 'fechamentos_semanais',
@@ -672,60 +905,35 @@ app.post('/api/week-closure/toggle', async (req, res) => {
       valorAnterior: oldStatus,
       valorNovo: newStatus,
       alteradoPor: 'Administrador da Fazenda',
-      motivo: isClosed
-        ? `Semana fechada (${totalCaixas} caixas, R$ ${totalPagar.toFixed(2)})`
-        : 'Semana reaberta para edição',
+      motivo: newStatus === 'FECHADO'
+        ? `Período ${startDate} a ${endDate} fechado`
+        : `Período ${startDate} a ${endDate} reaberto`,
     });
 
-    res.json({
-      isClosed,
-      closedAt: isClosed ? toBrDateTime(new Date()) : undefined,
-      closedBy: isClosed ? 'Administrador da Fazenda' : undefined,
-    });
-  } catch (error) {
-    console.error('Erro ao alternar fechamento semanal:', error);
-    res.status(500).json({ error: 'Erro ao atualizar fechamento da semana' });
-  }
-});
-
-// ROTA 11: Listar Histórico de Alterações (Auditoria)
-app.get('/api/audit-logs', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT * FROM historico_alteracoes ORDER BY data_alteracao DESC, id DESC LIMIT 50'
+    const [updated] = await pool.query(
+      'SELECT fechado_em FROM fechamentos_semanais WHERE id = ?',
+      [fechamentoId]
     );
 
-    const tabelaLabels = {
-      lancamentos_producao: 'Produção',
-      lancamentos_diaria: 'Diária',
-      faltas: 'Falta',
-      trabalhadores: 'Trabalhador',
-      pagamentos: 'Pagamento',
-      fechamentos_semanais: 'Fechamento Semanal',
-    };
-
-    const logs = rows.map((r) => {
-      const label = tabelaLabels[r.tabela_afetada] || r.tabela_afetada;
-      return {
-        id: `audit_${r.id}`,
-        date: toBrDate(r.data_alteracao),
-        timestamp: toBrDateTime(r.data_alteracao),
-        workerId: String(r.registro_id),
-        workerName: label,
-        changeTitle: `${label} • ${r.campo_alterado}`,
-        previousValue: r.valor_anterior || 'Sem registro',
-        newValue: r.valor_novo || '-',
-        alteredBy: r.alterado_por || 'Sistema',
-        reason: r.motivo || 'Alteração registrada no banco de dados',
-      };
+    res.json({
+      id: fechamentoId,
+      startDate,
+      endDate,
+      isClosed: newStatus === 'FECHADO',
+      closedAt: updated[0]?.fechado_em
+        ? toBrDateTime(updated[0].fechado_em)
+        : undefined,
+      closedBy: newStatus === 'FECHADO' ? 'Administrador da Fazenda' : undefined,
     });
-
-    res.json(logs);
   } catch (error) {
-    console.error('Erro ao listar auditoria:', error);
-    res.status(500).json({ error: 'Erro ao buscar histórico de alterações' });
+    if (connection) await connection.rollback();
+    console.error('Erro ao alternar fechamento semanal:', error);
+    res.status(500).json({ error: 'Erro ao atualizar fechamento da semana' });
+  } finally {
+    if (connection) connection.release();
   }
 });
+
 
 const PORT = 3001;
 app.listen(PORT, () => {

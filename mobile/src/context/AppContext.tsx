@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   ScreenType,
@@ -21,27 +22,30 @@ interface AppContextType {
   navigateTo: (screen: ScreenType) => void;
   goBack: () => void;
 
-  // Selected entities
   selectedWorkerId: string | null;
   setSelectedWorkerId: (id: string | null) => void;
   selectedPaymentId: string | null;
   setSelectedPaymentId: (id: string | null) => void;
 
-  // Data
   workers: Worker[];
   launches: Launch[];
   payments: PaymentRecord[];
   auditLogs: AuditLog[];
   weekClosure: WeekClosure;
 
-  // Actions
   addWorker: (worker: Omit<Worker, 'id' | 'createdAt' | 'avatarInitials'>) => void;
   updateWorkerStatus: (id: string, status: 'ativo' | 'inativo') => void;
   addLaunch: (launch: Omit<Launch, 'id' | 'createdAt'>) => void;
   markPaymentAsPaid: (paymentId: string, method?: string) => void;
+  cancelPayment: (paymentId: string) => Promise<void>;
+
+  closureStartDate: string;
+  closureEndDate: string;
+  setClosureStartDate: (date: string) => void;
+  setClosureEndDate: (date: string) => void;
+  refreshWeekClosure: () => void;
   toggleWeekClosure: () => void;
 
-  // Global filters & states
   periodString: string;
   setPeriodString: (p: string) => void;
   isOnline: boolean;
@@ -50,7 +54,6 @@ interface AppContextType {
   login: () => void;
   logout: () => void;
 
-  // Modals & Drawers
   isQuickLaunchOpen: boolean;
   setIsQuickLaunchOpen: (open: boolean) => void;
   isNotificationOpen: boolean;
@@ -58,7 +61,6 @@ interface AppContextType {
   isMenuDrawerOpen: boolean;
   setIsMenuDrawerOpen: (open: boolean) => void;
 
-  // Notification toast
   toastMessage: string | null;
   showToast: (msg: string) => void;
 }
@@ -68,11 +70,40 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('dashboard');
   const [screenHistory, setScreenHistory] = useState<ScreenType[]>(['dashboard']);
+
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>('w1');
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>('p1');
+
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [periodString, setPeriodString] = useState<string>('01/06/2025 a 15/06/2025');
   const [isOnline, setIsOnline] = useState<boolean>(true);
+
+  // Datas do fechamento semanal
+  const getMonday = () => {
+    const date = new Date();
+    const day = date.getDay();
+
+    date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const dayNumber = String(date.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${dayNumber}`;
+  };
+
+  const [closureStartDate, setClosureStartDate] = useState(getMonday);
+
+  const [closureEndDate, setClosureEndDate] = useState(() => {
+    const sunday = new Date(`${getMonday()}T12:00:00`);
+    sunday.setDate(sunday.getDate() + 6);
+
+    const year = sunday.getFullYear();
+    const month = String(sunday.getMonth() + 1).padStart(2, '0');
+    const day = String(sunday.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  });
 
   const [isQuickLaunchOpen, setIsQuickLaunchOpen] = useState<boolean>(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState<boolean>(false);
@@ -130,6 +161,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .then((data) => {
         if (Array.isArray(data)) {
           setPayments(data);
+
           if (data.length > 0) {
             setSelectedPaymentId((curr) =>
               data.some((p) => p.id === curr) ? curr : data[0].id
@@ -151,26 +183,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch((err) => console.error('Erro ao buscar auditoria:', err));
   };
 
-  const refreshWeekClosure = () => {
-    fetch('/api/week-closure')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && typeof data.isClosed === 'boolean') {
-          setWeekClosure((prev) => ({
-            ...prev,
-            isClosed: data.isClosed,
-            closedAt: data.closedAt,
-            closedBy: data.closedBy,
-          }));
-          if (data.period) {
-            setPeriodString(data.period);
-          }
-        }
-      })
-      .catch((err) => console.error('Erro ao buscar fechamento semanal:', err));
+  const refreshWeekClosure = async () => {
+    try {
+      const params = new URLSearchParams({
+        startDate: closureStartDate,
+        endDate: closureEndDate,
+      });
+
+      const res = await fetch(`/api/week-closure?${params}`);
+
+      if (!res.ok) {
+        throw new Error('Erro ao buscar fechamento semanal');
+      }
+
+      const data = await res.json();
+
+      setWeekClosure((prev) => ({
+        ...prev,
+        ...data,
+      }));
+
+      if (data.period) {
+        setPeriodString(data.period);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar fechamento:', err);
+    }
   };
 
-  // Carga inicial completa do MariaDB
+  // Carga inicial do banco de dados
   useEffect(() => {
     fetch('/api/workers')
       .then((res) => res.json())
@@ -196,8 +237,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refreshWeekClosure();
   }, []);
 
+  useEffect(() => {
+    if (closureStartDate && closureEndDate && closureStartDate <= closureEndDate) {
+      refreshWeekClosure();
+      refreshPayments();
+    }
+  }, [closureStartDate, closureEndDate]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
+
     setTimeout(() => {
       setToastMessage(null);
     }, 3200);
@@ -213,7 +262,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (screenHistory.length > 1) {
       const nextHistory = [...screenHistory];
       nextHistory.pop();
+
       const prevScreen = nextHistory[nextHistory.length - 1];
+
       setScreenHistory(nextHistory);
       setCurrentScreen(prevScreen);
     } else {
@@ -221,19 +272,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addWorker = async (workerData: Omit<Worker, 'id' | 'createdAt' | 'avatarInitials'>) => {
+  const addWorker = async (
+    workerData: Omit<Worker, 'id' | 'createdAt' | 'avatarInitials'>
+  ) => {
     try {
       const res = await fetch('/api/workers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(workerData),
       });
+
       if (!res.ok) throw new Error('Falha ao gravar no banco');
+
       const newWorker: Worker = await res.json();
 
       setWorkers((prev) => [newWorker, ...prev]);
       refreshPayments();
       refreshAuditLogs();
+
       showToast(`Trabalhador ${newWorker.name} cadastrado no banco!`);
       navigateTo('workers');
     } catch (err) {
@@ -242,16 +298,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updateWorkerStatus = async (id: string, status: 'ativo' | 'inativo') => {
+  const updateWorkerStatus = async (
+    id: string,
+    status: 'ativo' | 'inativo'
+  ) => {
     try {
       await fetch(`/api/workers/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+
       setWorkers((prev) =>
         prev.map((w) => (w.id === id ? { ...w, status } : w))
       );
+
       refreshAuditLogs();
       showToast('Status do trabalhador atualizado no banco!');
     } catch (err) {
@@ -267,21 +328,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(launchData),
       });
-      if (!res.ok) throw new Error('Falha ao salvar lançamento no banco');
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Falha ao salvar lançamento no banco');
+      }
+
       const newLaunch: Launch = await res.json();
 
       setLaunches((prev) => [newLaunch, ...prev]);
       refreshPayments();
       refreshAuditLogs();
+
       showToast('Lançamento salvo no banco de dados!');
       navigateTo('dashboard');
     } catch (err) {
       console.error(err);
-      showToast('Erro ao salvar lançamento no banco.');
+      showToast(
+        err instanceof Error ? err.message : 'Erro ao salvar lançamento no banco.'
+      );
     }
   };
 
-  const markPaymentAsPaid = async (paymentId: string, method: string = 'PIX') => {
+  const markPaymentAsPaid = async (
+    paymentId: string,
+    method: string = 'PIX'
+  ) => {
     try {
       const payment = payments.find((p) => p.id === paymentId);
       if (!payment) return;
@@ -295,7 +367,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           workerName: payment.workerName,
         }),
       });
+
       if (!res.ok) throw new Error('Falha ao confirmar pagamento');
+
       const result = await res.json();
 
       setPayments((prev) =>
@@ -310,6 +384,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : p
         )
       );
+
       refreshAuditLogs();
       showToast('Pagamento confirmado e salvo no banco!');
     } catch (err) {
@@ -318,29 +393,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleWeekClosure = async () => {
+  // Estornar pagamento
+  const cancelPayment = async (paymentId: string) => {
     try {
-      const res = await fetch('/api/week-closure/toggle', {
+      const payment = payments.find((p) => p.id === paymentId);
+      if (!payment) return;
+
+      const res = await fetch(`/api/payments/${payment.workerId}/unpay`, {
         method: 'POST',
       });
-      if (!res.ok) throw new Error('Falha ao alternar fechamento');
+
+      if (!res.ok) throw new Error('Falha ao estornar pagamento');
+
+      setPayments((prev) =>
+        prev.map((p) =>
+          p.id === paymentId
+            ? {
+                ...p,
+                status: 'a_pagar',
+                paidAt: undefined,
+                paymentMethod: undefined,
+              }
+            : p
+        )
+      );
+
+      refreshAuditLogs();
+      showToast('Pagamento estornado com sucesso!');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao estornar pagamento.');
+    }
+  };
+
+  const toggleWeekClosure = async () => {
+    try {
+      if (!closureStartDate || !closureEndDate || closureStartDate > closureEndDate) {
+        showToast('Selecione um período válido.');
+        return;
+      }
+
+      const res = await fetch('/api/week-closure/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          startDate: closureStartDate,
+          endDate: closureEndDate,
+        }),
+      });
+
       const data = await res.json();
 
-      setWeekClosure((prev) => ({
-        ...prev,
-        isClosed: data.isClosed,
-        closedAt: data.closedAt,
-        closedBy: data.closedBy,
-      }));
+      if (!res.ok) {
+        throw new Error(data.error || 'Falha ao atualizar fechamento');
+      }
+
+      await refreshWeekClosure();
       refreshAuditLogs();
+
       showToast(
         data.isClosed
-          ? 'Semana fechada no banco! Lançamentos bloqueados.'
-          : 'Semana reaberta para edição!'
+          ? 'Semana fechada com sucesso!'
+          : 'Semana reaberta com sucesso.'
       );
     } catch (err) {
       console.error(err);
-      showToast('Erro ao atualizar fechamento da semana.');
+
+      showToast(
+        err instanceof Error
+          ? err.message
+          : 'Erro ao atualizar fechamento da semana.'
+      );
     }
   };
 
@@ -362,20 +487,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         screenHistory,
         navigateTo,
         goBack,
+
         selectedWorkerId,
         setSelectedWorkerId,
         selectedPaymentId,
         setSelectedPaymentId,
+
         workers,
         launches,
         payments,
         auditLogs,
         weekClosure,
+
         addWorker,
         updateWorkerStatus,
         addLaunch,
         markPaymentAsPaid,
+        cancelPayment,
+
+        closureStartDate,
+        closureEndDate,
+        setClosureStartDate,
+        setClosureEndDate,
+        refreshWeekClosure,
         toggleWeekClosure,
+
         periodString,
         setPeriodString,
         isOnline,
@@ -383,12 +519,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isLoggedIn,
         login,
         logout,
+
         isQuickLaunchOpen,
         setIsQuickLaunchOpen,
         isNotificationOpen,
         setIsNotificationOpen,
         isMenuDrawerOpen,
         setIsMenuDrawerOpen,
+
         toastMessage,
         showToast,
       }}
@@ -400,8 +538,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 export const useApp = () => {
   const context = useContext(AppContext);
+
   if (!context) {
     throw new Error('useApp must be used within an AppProvider');
   }
+
   return context;
 };

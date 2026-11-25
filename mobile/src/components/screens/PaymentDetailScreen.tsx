@@ -8,6 +8,7 @@ export const PaymentDetailScreen: React.FC = () => {
     payments,
     selectedPaymentId,
     markPaymentAsPaid,
+    cancelPayment,
     goBack,
   } = useApp();
 
@@ -20,6 +21,15 @@ export const PaymentDetailScreen: React.FC = () => {
   const handlePay = () => {
     markPaymentAsPaid(payment.id, paymentMethod);
     setShowMethodSelect(false);
+  };
+  const handleCancelPayment = () => {
+    const confirmed = window.confirm(
+      `Deseja estornar o pagamento de ${payment.workerName}?`
+    );
+
+    if (confirmed) {
+      cancelPayment(payment.id);
+    }
   };
 
   return (
@@ -105,11 +115,10 @@ export const PaymentDetailScreen: React.FC = () => {
                       key={m}
                       type="button"
                       onClick={() => setPaymentMethod(m)}
-                      className={`py-2 rounded-xl border text-center font-bold transition-all cursor-pointer ${
-                        paymentMethod === m
-                          ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
-                          : 'border-stone-200 text-stone-600 hover:bg-stone-50'
-                      }`}
+                      className={`py-2 rounded-xl border text-center font-bold transition-all cursor-pointer ${paymentMethod === m
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                        : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                        }`}
                     >
                       {m}
                     </button>
@@ -149,10 +158,16 @@ export const PaymentDetailScreen: React.FC = () => {
                 {payment.paidAt} via {payment.paymentMethod || 'PIX'}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={handleCancelPayment}
+              className="w-full py-3 px-4 bg-white border border-red-200 text-red-700 hover:bg-red-50 font-bold rounded-xl text-sm"
+            >
+              Estornar pagamento
+            </button>
           </div>
         )}
 
-        {/* Histórico de pagamentos */}
         <div className="space-y-2">
           <h3 className="text-xs font-bold text-stone-800">
             Histórico de pagamentos
